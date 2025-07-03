@@ -1,0 +1,25 @@
+[package]
+name = "anemoi_halo2"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Anemoi Halo2 Merkle Membership Proof Circuit"
+license = "MIT"
+repository = "https://github.com/yourusername/anemoi_halo2"
+keywords = ["zero-knowledge", "halo2", "anemoi", "merkle", "proof"]
+categories = ["cryptography"]
+
+[dependencies]
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = [
+    "circuit-params",
+    "derive_serde",
+] }
+serde = { version = "1.0", features = ["derive"] }
+rand_core = "0.6"
+ff = "0.13"
+group = "0.13"
+
+[dev-dependencies]
+blstrs = "0.5"
+rand = "0.8"
+pasta_curves = "0.5"
