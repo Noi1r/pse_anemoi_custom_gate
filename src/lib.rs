@@ -1,7 +1,8 @@
 
 
 pub mod anemoi_constants;
-pub mod circuit_complete;  
+pub mod circuit_complete;
+pub mod circuit_optimized;  
 
 
 pub use circuit_complete::{
@@ -9,6 +10,13 @@ pub use circuit_complete::{
     CompleteMerkleConfig,
     complete_anemoi_jive_hash,
     compute_merkle_root_complete
+};
+
+pub use circuit_optimized::{
+    OptimizedMerkleMembershipCircuit,
+    OptimizedMerkleConfig,
+    optimized_anemoi_jive_hash,
+    compute_merkle_root_optimized
 };
 
 pub use anemoi_constants::AnemoiConstants;

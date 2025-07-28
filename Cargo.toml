@@ -1,5 +1,5 @@
 [package]
-name = "anemoi_halo2"
+name = "pse_anemoi_custom_gate"
 version = "0.1.0"
 edition = "2021"
 authors = ["Your Name <your.email@example.com>"]

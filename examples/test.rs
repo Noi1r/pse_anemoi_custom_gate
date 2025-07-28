@@ -26,13 +26,13 @@ use ff::Field;
 use rand::rngs::OsRng;
 
 use pse_anemoi_custom_gate::{
-    circuit_complete::{CompleteMerkleMembershipCircuit, MerkleProofNode, MerklePosition},
+    circuit_optimized::{OptimizedMerkleMembershipCircuit, MerkleProofNode, MerklePosition},
     complete_anemoi_jive_hash,
 };
 
 fn main() {
 
-    let depth: usize = 10;
+    let depth: usize = 256;
     let k: u32 = 14;
 
     // 生成测试数据
@@ -72,7 +72,7 @@ fn main() {
     let expected_root = current_hash;
 
     // 创建电路
-    let circuit = CompleteMerkleMembershipCircuit {
+    let circuit = OptimizedMerkleMembershipCircuit {
         leaf_value,
         merkle_path,
         expected_root,
@@ -106,6 +106,8 @@ fn main() {
     ).expect("证明生成失败");
     let proof = transcript.finalize();
     let proof_time = proof_start.elapsed();
+    println!("{} ", proof_time.as_millis());
+
 
     // 证明验证时间测试
     let verify_start = Instant::now();
