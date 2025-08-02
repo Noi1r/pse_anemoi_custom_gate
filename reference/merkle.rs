@@ -7,10 +7,7 @@ use crate::{
         mock::MockCircuit,
         PlonkishCircuit, PlonkishCircuitInfo,
     },
-    util::{
-        arithmetic::PrimeField,
-        expression::rotate::Rotatable,
-    },
+    util::{arithmetic::PrimeField, expression::rotate::Rotatable},
 };
 
 use rand::RngCore;
@@ -96,6 +93,7 @@ fn build_tree_location_verification_gates<F: PrimeField>(
     let sel1_gate_idx = usable_indices[*gate_counter];
     *gate_counter += 1;
 
+    // TODO: lack permutation for is_left, middle, right.
     w1_values[sel1_gate_idx] = left_hash;
     w2_values[sel1_gate_idx] = is_left;
     w3_values[sel1_gate_idx] = middle_hash;
@@ -155,9 +153,9 @@ pub fn merkle_membership_proof_circuit<F: PrimeField, R: Rotatable + From<usize>
     }
 
     // Initialize polynomials using helper functions
-    let (mut w1_values, mut w2_values, mut w3_values, mut w4_values, mut wo_values) = 
+    let (mut w1_values, mut w2_values, mut w3_values, mut w4_values, mut wo_values) =
         init_witness_polynomials(size);
-    let [mut q1, mut q2, mut q3, mut q4, mut qo, mut qm1, mut qm2, mut qc, mut qecc, mut qb, mut qprk1, mut qprk2, mut qprk3, mut qprk4] = 
+    let [mut q1, mut q2, mut q3, mut q4, mut qo, mut qm1, mut qm2, mut qc, mut qecc, mut qb, mut qprk1, mut qprk2, mut qprk3, mut qprk4] =
         init_selector_polynomials(size);
 
     let mut permutation = Permutation::default();

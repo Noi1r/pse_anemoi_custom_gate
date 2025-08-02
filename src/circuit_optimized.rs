@@ -1,11 +1,13 @@
+use ff::PrimeField;
 use halo2_proofs::{
     arithmetic::Field,
-    circuit::{Layouter, Value, Region},
-    plonk::{Circuit, ConstraintSystem, Error, Selector, Advice, Column, Expression, Instance, Fixed},
+    circuit::{Layouter, Region, Value},
+    plonk::{
+        Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, Instance, Selector,
+    },
     poly::Rotation,
 };
 use serde::{Deserialize, Serialize};
-use ff::PrimeField;
 
 use crate::anemoi_constants::AnemoiConstants;
 
@@ -38,26 +40,25 @@ pub struct OptimizedMerkleConfig {
     /// 5个advice列 (TurboPlonk标准)
     /// w1, w2, w3, w4, wo
     pub advices: [Column<Advice>; 5],
-    
-   
+
     /// TurboPlonk标准选择器
-    pub q1: Selector,
-    pub q2: Selector,
-    pub q3: Selector,
-    pub q4: Selector,
-    pub qo: Selector,
+    pub q1: Column<Fixed>,
+    pub q2: Column<Fixed>,
+    pub q3: Column<Fixed>,
+    pub q4: Column<Fixed>,
+    pub qo: Column<Fixed>,
     pub qm1: Selector,  // w1 * w2 乘法
     pub qm2: Selector,  // w3 * w4 乘法
     pub qc: Selector,   // 常数项
     pub qecc: Selector, // 五次约束 w1*w2*w3*w4*wo
     pub qb: Selector,   // 布尔约束
-    
+
     /// Anemoi预处理轮密钥 (4个，对应x[0], x[1], y[0], y[1])
     pub qprk1: Column<Fixed>, // round_keys_x[0]
-    pub qprk2: Column<Fixed>, // round_keys_x[1] 
+    pub qprk2: Column<Fixed>, // round_keys_x[1]
     pub qprk3: Column<Fixed>, // round_keys_y[0]
     pub qprk4: Column<Fixed>, // round_keys_y[1]
-    
+
     /// 实例列
     pub instance: Column<Instance>,
 }
@@ -73,25 +74,25 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
 
     fn configure(cs: &mut ConstraintSystem<F>) -> Self::Config {
         let advices = [(); 5].map(|_| cs.advice_column());
-        
+
         // TurboPlonk标准选择器
-        let q1 = cs.complex_selector();
-        let q2 = cs.complex_selector();
-        let q3 = cs.complex_selector();
-        let q4 = cs.complex_selector();
-        let qo = cs.complex_selector();
+        let q1 = cs.fixed_column();
+        let q2 = cs.fixed_column();
+        let q3 = cs.fixed_column();
+        let q4 = cs.fixed_column();
+        let qo = cs.fixed_column();
         let qm1 = cs.complex_selector();
         let qm2 = cs.complex_selector();
         let qc = cs.complex_selector();
         let qecc = cs.complex_selector();
         let qb = cs.complex_selector();
-        
+
         // Anemoi预处理轮密钥
         let qprk1 = cs.fixed_column();
         let qprk2 = cs.fixed_column();
         let qprk3 = cs.fixed_column();
         let qprk4 = cs.fixed_column();
-        
+
         let instance = cs.instance_column();
 
         // 启用相等约束
@@ -107,28 +108,28 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
             let w3 = meta.query_advice(advices[2], Rotation::cur());
             let w4 = meta.query_advice(advices[3], Rotation::cur());
             let wo = meta.query_advice(advices[4], Rotation::cur());
-            
-            let q1 = meta.query_selector(q1);
-            let q2 = meta.query_selector(q2);
-            let q3 = meta.query_selector(q3);
-            let q4 = meta.query_selector(q4);
-            let qo = meta.query_selector(qo);
+
+            let q1 = meta.query_fixed(q1, Rotation::cur());
+            let q2 = meta.query_fixed(q2, Rotation::cur());
+            let q3 = meta.query_fixed(q3, Rotation::cur());
+            let q4 = meta.query_fixed(q4, Rotation::cur());
+            let qo = meta.query_fixed(qo, Rotation::cur());
             let qm1 = meta.query_selector(qm1);
             let qm2 = meta.query_selector(qm2);
             let qc = meta.query_selector(qc);
             let qecc = meta.query_selector(qecc);
-            
+
             vec![
                 // TurboPlonk基础约束：q1*w1 + q2*w2 + q3*w3 + q4*w4 + qm1*w1*w2 + qm2*w3*w4 + qc + qecc*w1*w2*w3*w4*wo - qo*wo = 0
-                q1 * w1.clone() 
-                + q2 * w2.clone() 
-                + q3 * w3.clone() 
-                + q4 * w4.clone() 
-                + qm1 * w1.clone() * w2.clone()
-                + qm2 * w3.clone() * w4.clone()
-                + qc
-                + qecc * w1 * w2 * w3 * w4 * wo.clone()
-                - qo * wo
+                q1 * w1.clone()
+                    + q2 * w2.clone()
+                    + q3 * w3.clone()
+                    + q4 * w4.clone()
+                    + qm1 * w1.clone() * w2.clone()
+                    + qm2 * w3.clone() * w4.clone()
+                    + qc
+                    + qecc * w1 * w2 * w3 * w4 * wo.clone()
+                    - qo * wo,
             ]
         });
 
@@ -138,7 +139,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
             let w3 = meta.query_advice(advices[2], Rotation::cur());
             let w4 = meta.query_advice(advices[3], Rotation::cur());
             let qb = meta.query_selector(qb);
-            
+
             vec![
                 qb.clone() * w2.clone() * (w2 - Expression::Constant(F::ONE)),
                 qb.clone() * w3.clone() * (w3 - Expression::Constant(F::ONE)),
@@ -153,66 +154,99 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
             let w3 = meta.query_advice(advices[2], Rotation::cur());
             let w4 = meta.query_advice(advices[3], Rotation::cur());
             let wo = meta.query_advice(advices[4], Rotation::cur());
-            
+
             let w1_next = meta.query_advice(advices[0], Rotation::next());
             let w2_next = meta.query_advice(advices[1], Rotation::next());
             let w3_next = meta.query_advice(advices[2], Rotation::next());
-            
+
             let qprk1 = meta.query_fixed(qprk1, Rotation::cur());
             let qprk2 = meta.query_fixed(qprk2, Rotation::cur());
             let qprk3 = meta.query_fixed(qprk3, Rotation::cur());
             let qprk4 = meta.query_fixed(qprk4, Rotation::cur());
-            
+
             // Anemoi常量
             let g = Expression::Constant(F::from(5u64)); // generator
             let g_inv = Expression::Constant(
-                F::from_str_vartime("8755297148735710088898562298102910035419345760166413737479281674630323398247")
-                    .unwrap_or(F::ZERO)
+                F::from_str_vartime(
+                    "8755297148735710088898562298102910035419345760166413737479281674630323398247",
+                )
+                .unwrap_or(F::ZERO),
             ); // generator_inv
-            
+
             // 计算中间表达式
-            let c_prime_1 = w1.clone() + w4.clone() + g.clone() * (w2.clone() + w3.clone()) + qprk3.clone();
-            let c_prime_2 = g.clone() * (w1.clone() + w4.clone()) 
-                          + (g.clone() * g.clone() + Expression::Constant(F::ONE)) * (w2.clone() + w3.clone()) 
-                          + qprk4.clone();
-            
+            let c_prime_1 =
+                w1.clone() + w4.clone() + g.clone() * (w2.clone() + w3.clone()) + qprk3.clone();
+            let c_prime_2 = g.clone() * (w1.clone() + w4.clone())
+                + (g.clone() * g.clone() + Expression::Constant(F::ONE))
+                    * (w2.clone() + w3.clone())
+                + qprk4.clone();
+
             let two = Expression::Constant(F::from(2u64));
-            
+
             vec![
                 // Anemoi约束1 - 手动展开5次幂和平方
-                qprk3.clone() * (
-                    (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone())
-                    + g.clone() * c_prime_1.clone() * c_prime_1.clone()
-                    - (two.clone() * w1.clone() + w4.clone() + g.clone() * (two.clone() * w2.clone() + w3.clone()) + qprk1)
-                ),
-                
+                qprk3.clone()
+                    * ((c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        + g.clone() * c_prime_1.clone() * c_prime_1.clone()
+                        - (two.clone() * w1.clone()
+                            + w4.clone()
+                            + g.clone() * (two.clone() * w2.clone() + w3.clone())
+                            + qprk1)),
                 // Anemoi约束2 (使用wo而不是w4_next) - 手动展开5次幂和平方
-                qprk3.clone() * (
-                    (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone())
-                    + g.clone() * c_prime_2.clone() * c_prime_2.clone()
-                    - (g.clone() * (two.clone() * w1.clone() + w4.clone()) 
-                       + (g.clone() * g.clone() + Expression::Constant(F::ONE)) * (two.clone() * w2.clone() + w3.clone())
-                       + qprk2)
-                ),
-                
+                qprk3.clone()
+                    * ((c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        + g.clone() * c_prime_2.clone() * c_prime_2.clone()
+                        - (g.clone() * (two.clone() * w1.clone() + w4.clone())
+                            + (g.clone() * g.clone() + Expression::Constant(F::ONE))
+                                * (two.clone() * w2.clone() + w3.clone())
+                            + qprk2)),
                 // Anemoi约束3 - 手动展开5次幂和平方
-                qprk3.clone() * (
-                    (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone()) * (c_prime_1.clone() - w3_next.clone())
-                    + g.clone() * w3_next.clone() * w3_next.clone() + g_inv.clone() - w1_next
-                ),
-                
+                qprk3.clone()
+                    * ((c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        * (c_prime_1.clone() - w3_next.clone())
+                        + g.clone() * w3_next.clone() * w3_next.clone()
+                        + g_inv.clone()
+                        - w1_next),
                 // Anemoi约束4 (使用wo) - 手动展开5次幂和平方
-                qprk3 * (
-                    (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone()) * (c_prime_2.clone() - wo.clone())
-                    + g.clone() * wo.clone() * wo.clone() + g_inv - w2_next
-                ),
+                qprk3
+                    * ((c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        * (c_prime_2.clone() - wo.clone())
+                        + g.clone() * wo.clone() * wo.clone()
+                        + g_inv
+                        - w2_next),
             ]
         });
 
         OptimizedMerkleConfig {
             advices,
-            q1, q2, q3, q4, qo, qm1, qm2, qc, qecc, qb,
-            qprk1, qprk2, qprk3, qprk4,
+            q1,
+            q2,
+            q3,
+            q4,
+            qo,
+            qm1,
+            qm2,
+            qc,
+            qecc,
+            qb,
+            qprk1,
+            qprk2,
+            qprk3,
+            qprk4,
             instance,
         }
     }
@@ -223,58 +257,6 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
         let anemoi_constants = AnemoiConstants::<F>::new();
-
-        // 预处理轮密钥数据
-        let mut qprk1_data = vec![F::ZERO; 1 << 13]; // k=13的大小
-        let mut qprk2_data = vec![F::ZERO; 1 << 13];
-        let mut qprk3_data = vec![F::ZERO; 1 << 13];
-        let mut qprk4_data = vec![F::ZERO; 1 << 13];
-        
-        // 在合适的行设置轮密钥
-        for round in 0..14 {
-            // 假设每轮使用4行，轮密钥在第二行
-            let round_key_row = round * 4 + 1;
-            if round_key_row < qprk1_data.len() {
-                qprk1_data[round_key_row] = anemoi_constants.round_keys_x[round][0];
-                qprk2_data[round_key_row] = anemoi_constants.round_keys_x[round][1];
-                qprk3_data[round_key_row] = anemoi_constants.round_keys_y[round][0];
-                qprk4_data[round_key_row] = anemoi_constants.round_keys_y[round][1];
-            }
-        }
-
-        // 分配预处理多项式
-        layouter.assign_region(
-            || "preprocess round keys",
-            |mut region| {
-                for i in 0..qprk1_data.len() {
-                    region.assign_fixed(
-                        || format!("qprk1[{}]", i),
-                        config.qprk1,
-                        i,
-                        || Value::known(qprk1_data[i]),
-                    )?;
-                    region.assign_fixed(
-                        || format!("qprk2[{}]", i),
-                        config.qprk2,
-                        i,
-                        || Value::known(qprk2_data[i]),
-                    )?;
-                    region.assign_fixed(
-                        || format!("qprk3[{}]", i),
-                        config.qprk3,
-                        i,
-                        || Value::known(qprk3_data[i]),
-                    )?;
-                    region.assign_fixed(
-                        || format!("qprk4[{}]", i),
-                        config.qprk4,
-                        i,
-                        || Value::known(qprk4_data[i]),
-                    )?;
-                }
-                Ok(())
-            },
-        )?;
 
         let (leaf_cell, root_cell) = layouter.assign_region(
             || "Optimized Merkle path with TurboPlonk constraints",
@@ -289,7 +271,6 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                     offset,
                     || Value::known(self.leaf_value),
                 )?;
-                
                 offset += 1;
 
                 // 处理每一层的Merkle路径
@@ -300,13 +281,13 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                         MerklePosition::Middle => (node.sibling1, current_hash, node.sibling2),
                         MerklePosition::Right => (node.sibling1, node.sibling2, current_hash),
                     };
-                    
+
                     // 位置验证 (使用TurboPlonk基础约束)
                     self.assign_position_verification_optimized(
-                        &mut region, 
-                        &config, 
-                        &mut offset, 
-                        node.position.clone()
+                        &mut region,
+                        &config,
+                        &mut offset,
+                        node.position.clone(),
                     )?;
 
                     // 优化的Anemoi Jive CRH实现
@@ -321,7 +302,6 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                         &anemoi_constants,
                     )?;
                 }
-
                 // 最终根验证
                 self.assign_root_verification_optimized(
                     &mut region,
@@ -365,11 +345,31 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
             MerklePosition::Right => (F::ZERO, F::ZERO, F::ONE),
         };
 
-        // 激活选择器
-        config.q2.enable(region, *offset)?;
-        config.q3.enable(region, *offset)?;
-        config.q4.enable(region, *offset)?;
-        config.qc.enable(region, *offset)?;
+        region.assign_fixed(
+            || "q2 selector",
+            config.q2,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "q3 selector",
+            config.q3,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "q4 selector",
+            config.q4,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "qo selector",
+            config.qo,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+
         config.qb.enable(region, *offset)?; // 激活布尔约束
 
         region.assign_advice(
@@ -400,7 +400,7 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
             || "unused_wo",
             config.advices[4],
             *offset,
-            || Value::known(F::ZERO),
+            || Value::known(F::ONE),
         )?;
 
         *offset += 1;
@@ -422,26 +422,96 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
         let mut jive_x = [left, middle];
         let mut jive_y = [right, padding];
         let sum_before_perm = jive_x[0] + jive_x[1] + jive_y[0] + jive_y[1];
+        region.assign_fixed(
+            || "q1 selector",
+            config.q1,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "q2 selector",
+            config.q2,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "q3 selector",
+            config.q3,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "q4 selector",
+            config.q4,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "qo selector",
+            config.qo,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
 
-        // 激活TurboPlonk基础约束选择器
-        config.q1.enable(region, *offset)?;
-        config.q2.enable(region, *offset)?;
-        config.q3.enable(region, *offset)?;
-        config.q4.enable(region, *offset)?;
-        config.qo.enable(region, *offset)?;
-
-        region.assign_advice(|| "x0", config.advices[0], *offset, || Value::known(jive_x[0]))?;
-        region.assign_advice(|| "x1", config.advices[1], *offset, || Value::known(jive_x[1]))?;
-        region.assign_advice(|| "y0", config.advices[2], *offset, || Value::known(jive_y[0]))?;
-        region.assign_advice(|| "y1", config.advices[3], *offset, || Value::known(jive_y[1]))?;
-        region.assign_advice(|| "sum_before", config.advices[4], *offset, || Value::known(sum_before_perm))?;
+        region.assign_advice(
+            || "x0",
+            config.advices[0],
+            *offset,
+            || Value::known(jive_x[0]),
+        )?;
+        region.assign_advice(
+            || "x1",
+            config.advices[1],
+            *offset,
+            || Value::known(jive_x[1]),
+        )?;
+        region.assign_advice(
+            || "y0",
+            config.advices[2],
+            *offset,
+            || Value::known(jive_y[0]),
+        )?;
+        region.assign_advice(
+            || "y1",
+            config.advices[3],
+            *offset,
+            || Value::known(jive_y[1]),
+        )?;
+        region.assign_advice(
+            || "sum_before",
+            config.advices[4],
+            *offset,
+            || Value::known(sum_before_perm),
+        )?;
 
         *offset += 1;
 
         // 14轮Anemoi变换 (每轮一行，使用预处理轮密钥)
         for round in 0..14 {
-            // 激活Anemoi约束 (通过qprk3非零)
-            region.assign_fixed(|| format!("qprk3_round_{}", round), config.qprk3, *offset, || Value::known(F::ONE))?;
+            region.assign_fixed(
+                || format!("qprk1_round_{}", round),
+                config.qprk1,
+                *offset,
+                || Value::known(constants.preprocessed_round_keys_x[round][0]),
+            )?;
+            region.assign_fixed(
+                || format!("qprk2_round_{}", round),
+                config.qprk2,
+                *offset,
+                || Value::known(constants.preprocessed_round_keys_x[round][1]),
+            )?;
+            region.assign_fixed(
+                || format!("qprk3_round_{}", round),
+                config.qprk3,
+                *offset,
+                || Value::known(constants.preprocessed_round_keys_y[round][0]),
+            )?;
+            region.assign_fixed(
+                || format!("qprk4_round_{}", round),
+                config.qprk4,
+                *offset,
+                || Value::known(constants.preprocessed_round_keys_y[round][1]),
+            )?;
 
             // 存储当前轮状态
             region.assign_advice(
@@ -469,25 +539,43 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
                 || Value::known(jive_y[1]),
             )?;
 
-            // 执行完整的Anemoi轮变换
             self.apply_anemoi_round(&mut jive_x, &mut jive_y, round, constants);
 
-            // wo存储某个中间值（根据约束需要）
-            region.assign_advice(
-                || format!("round_{}_intermediate", round),
-                config.advices[4],
-                *offset,
-                || Value::known(jive_y[1]), // 可以根据约束调整
-            )?;
+            // region.assign_advice(
+            //     || format!("round_{}_intermediate", round),
+            //     config.advices[4],
+            //     *offset,
+            //     || Value::known(jive_y[1]), // 可以根据约束调整
+            // )?;
 
             *offset += 1;
         }
 
         // 设置下一行数据以满足Rotation::next()约束
-        region.assign_advice(|| "final_x0", config.advices[0], *offset, || Value::known(jive_x[0]))?;
-        region.assign_advice(|| "final_x1", config.advices[1], *offset, || Value::known(jive_x[1]))?;
-        region.assign_advice(|| "final_y0", config.advices[2], *offset, || Value::known(jive_y[0]))?;
-        region.assign_advice(|| "final_y1", config.advices[3], *offset, || Value::known(jive_y[1]))?;
+        region.assign_advice(
+            || "final_x0",
+            config.advices[0],
+            *offset,
+            || Value::known(jive_x[0]),
+        )?;
+        region.assign_advice(
+            || "final_x1",
+            config.advices[1],
+            *offset,
+            || Value::known(jive_x[1]),
+        )?;
+        region.assign_advice(
+            || "final_y0",
+            config.advices[2],
+            *offset,
+            || Value::known(jive_y[0]),
+        )?;
+        region.assign_advice(
+            || "final_y1",
+            config.advices[3],
+            *offset,
+            || Value::known(jive_y[1]),
+        )?;
 
         // 应用最终变换
         self.apply_final_transformations(&mut jive_x, &mut jive_y, constants);
@@ -495,19 +583,64 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
         let sum_after_perm = jive_x[0] + jive_x[1] + jive_y[0] + jive_y[1];
         let jive_output = sum_before_perm + sum_after_perm;
 
-        region.assign_advice(|| "sum_after", config.advices[4], *offset, || Value::known(sum_after_perm))?;
+        region.assign_advice(
+            || "sum_after",
+            config.advices[4],
+            *offset,
+            || Value::known(sum_after_perm),
+        )?;
         *offset += 1;
 
         // 激活最终输出约束选择器
-        config.q1.enable(region, *offset)?;
-        config.q2.enable(region, *offset)?;
-        config.qo.enable(region, *offset)?;
+        region.assign_fixed(
+            || "q1 selector",
+            config.q1,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "q2 selector",
+            config.q2,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "qo selector",
+            config.qo,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
 
-        region.assign_advice(|| "sum_before_final", config.advices[0], *offset, || Value::known(sum_before_perm))?;
-        region.assign_advice(|| "sum_after_final", config.advices[1], *offset, || Value::known(sum_after_perm))?;
-        region.assign_advice(|| "unused_w3", config.advices[2], *offset, || Value::known(F::ZERO))?;
-        region.assign_advice(|| "unused_w4", config.advices[3], *offset, || Value::known(F::ZERO))?;
-        region.assign_advice(|| "jive_output", config.advices[4], *offset, || Value::known(jive_output))?;
+        region.assign_advice(
+            || "sum_before_final",
+            config.advices[0],
+            *offset,
+            || Value::known(sum_before_perm),
+        )?;
+        region.assign_advice(
+            || "sum_after_final",
+            config.advices[1],
+            *offset,
+            || Value::known(sum_after_perm),
+        )?;
+        region.assign_advice(
+            || "unused_w3",
+            config.advices[2],
+            *offset,
+            || Value::known(F::ZERO),
+        )?;
+        region.assign_advice(
+            || "unused_w4",
+            config.advices[3],
+            *offset,
+            || Value::known(F::ZERO),
+        )?;
+        region.assign_advice(
+            || "jive_output",
+            config.advices[4],
+            *offset,
+            || Value::known(jive_output),
+        )?;
 
         *offset += 1;
 
@@ -524,14 +657,49 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
         expected_root: F,
     ) -> Result<(), Error> {
         // 激活根验证约束选择器
-        config.q1.enable(region, *offset)?;
-        config.q2.enable(region, *offset)?;
+        region.assign_fixed(
+            || "q1 selector",
+            config.q1,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
+        region.assign_fixed(
+            || "qo selector",
+            config.qo,
+            *offset,
+            || Value::known(F::ONE),
+        )?;
 
-        region.assign_advice(|| "computed_root", config.advices[0], *offset, || Value::known(computed_root))?;
-        region.assign_advice(|| "expected_root", config.advices[1], *offset, || Value::known(expected_root))?;
-        region.assign_advice(|| "unused_w3", config.advices[2], *offset, || Value::known(F::ZERO))?;
-        region.assign_advice(|| "unused_w4", config.advices[3], *offset, || Value::known(F::ZERO))?;
-        region.assign_advice(|| "unused_wo", config.advices[4], *offset, || Value::known(F::ZERO))?;
+        region.assign_advice(
+            || "computed_root",
+            config.advices[0],
+            *offset,
+            || Value::known(computed_root),
+        )?;
+        region.assign_advice(
+            || "unused_w2",
+            config.advices[1],
+            *offset,
+            || Value::known(F::ZERO),
+        )?;
+        region.assign_advice(
+            || "unused_w3",
+            config.advices[2],
+            *offset,
+            || Value::known(F::ZERO),
+        )?;
+        region.assign_advice(
+            || "unused_w4",
+            config.advices[3],
+            *offset,
+            || Value::known(F::ZERO),
+        )?;
+        region.assign_advice(
+            || "expected_root",
+            config.advices[4],
+            *offset,
+            || Value::known(expected_root),
+        )?;
 
         *offset += 1;
         Ok(())
@@ -553,12 +721,14 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
 
         // 线性层变换 (MDS矩阵)
         let temp_x0 = jive_x[0] + constants.generator * jive_x[1];
-        let temp_x1 = constants.generator * jive_x[0] + constants.generator_square_plus_one * jive_x[1];
+        let temp_x1 =
+            constants.generator * jive_x[0] + constants.generator_square_plus_one * jive_x[1];
         jive_x[0] = temp_x0;
         jive_x[1] = temp_x1;
 
         let temp_y0 = jive_y[1] + constants.generator * jive_y[0];
-        let temp_y1 = constants.generator * jive_y[1] + constants.generator_square_plus_one * jive_y[0];
+        let temp_y1 =
+            constants.generator * jive_y[1] + constants.generator_square_plus_one * jive_y[0];
         jive_y[0] = temp_y0;
         jive_y[1] = temp_y1;
 
@@ -585,12 +755,14 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
     ) {
         // 最终线性层变换
         let temp_x0 = jive_x[0] + constants.generator * jive_x[1];
-        let temp_x1 = constants.generator * jive_x[0] + constants.generator_square_plus_one * jive_x[1];
+        let temp_x1 =
+            constants.generator * jive_x[0] + constants.generator_square_plus_one * jive_x[1];
         jive_x[0] = temp_x0;
         jive_x[1] = temp_x1;
 
         let temp_y0 = jive_y[1] + constants.generator * jive_y[0];
-        let temp_y1 = constants.generator * jive_y[1] + constants.generator_square_plus_one * jive_y[0];
+        let temp_y1 =
+            constants.generator * jive_y[1] + constants.generator_square_plus_one * jive_y[0];
         jive_y[0] = temp_y0;
         jive_y[1] = temp_y1;
 
@@ -603,12 +775,7 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
 }
 
 /// 优化的Anemoi Jive哈希函数 (对应电路逻辑)
-pub fn optimized_anemoi_jive_hash<F: PrimeField>(
-    left: F,
-    middle: F,
-    right: F,
-    padding: F,
-) -> F {
+pub fn optimized_anemoi_jive_hash<F: PrimeField>(left: F, middle: F, right: F, padding: F) -> F {
     let constants = AnemoiConstants::<F>::new();
     let mut jive_x = [left, middle];
     let mut jive_y = [right, padding];
@@ -625,12 +792,14 @@ pub fn optimized_anemoi_jive_hash<F: PrimeField>(
 
         // 线性层变换
         let temp_x0 = jive_x[0] + constants.generator * jive_x[1];
-        let temp_x1 = constants.generator * jive_x[0] + constants.generator_square_plus_one * jive_x[1];
+        let temp_x1 =
+            constants.generator * jive_x[0] + constants.generator_square_plus_one * jive_x[1];
         jive_x[0] = temp_x0;
         jive_x[1] = temp_x1;
 
         let temp_y0 = jive_y[1] + constants.generator * jive_y[0];
-        let temp_y1 = constants.generator * jive_y[1] + constants.generator_square_plus_one * jive_y[0];
+        let temp_y1 =
+            constants.generator * jive_y[1] + constants.generator_square_plus_one * jive_y[0];
         jive_y[0] = temp_y0;
         jive_y[1] = temp_y1;
 
@@ -672,23 +841,23 @@ pub fn optimized_anemoi_jive_hash<F: PrimeField>(
 /// 使用优化约束计算Merkle根
 pub fn compute_merkle_root_optimized<F: PrimeField>(
     leaf: F,
-    siblings: &[(F, F)], // (sibling1, sibling2) pairs
+    siblings: &[(F, F)],    // (sibling1, sibling2) pairs
     path_indices: &[usize], // 0=Left, 1=Middle, 2=Right
 ) -> F {
     let mut current = leaf;
-    
+
     for (i, &index) in path_indices.iter().enumerate() {
         let (sibling1, sibling2) = siblings[i];
-        
+
         let (left, middle, right) = match index {
             0 => (current, sibling1, sibling2), // Left
-            1 => (sibling1, current, sibling2), // Middle  
+            1 => (sibling1, current, sibling2), // Middle
             2 => (sibling1, sibling2, current), // Right
             _ => panic!("Invalid path index: {}", index),
         };
-        
+
         current = optimized_anemoi_jive_hash(left, middle, right, F::ZERO);
     }
-    
+
     current
 }

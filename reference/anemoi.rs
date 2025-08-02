@@ -1,8 +1,6 @@
 use crate::{
     backend::{
-        hyperplonk::util::common::*,
-        mock::MockCircuit,
-        PlonkishCircuit, PlonkishCircuitInfo,
+        hyperplonk::util::common::*, mock::MockCircuit, PlonkishCircuit, PlonkishCircuitInfo,
     },
     util::{
         arithmetic::PrimeField,
@@ -118,6 +116,7 @@ pub fn build_jive_crh_circuit<F: PrimeField>(
     q4[jive_input_idx] = F::ONE;
     qo[jive_input_idx] = F::ONE;
 
+    // @noir: why premutation self here?
     // Create self-referencing permutations for this Jive instance
     for poly_idx in 14..19 {
         permutation.copy((poly_idx, jive_input_idx), (poly_idx, jive_input_idx));
@@ -155,8 +154,10 @@ pub fn build_jive_crh_circuit<F: PrimeField>(
 
     // Final state constraint
     q1[next_round_idx] = F::from(3u64) * constants.generator + F::from(3u64);
-    q2[next_round_idx] = F::from(3u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
-    q3[next_round_idx] = F::from(2u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
+    q2[next_round_idx] =
+        F::from(3u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
+    q3[next_round_idx] =
+        F::from(2u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
     q4[next_round_idx] = F::from(2u64) * constants.generator + F::from(2u64);
     qo[next_round_idx] = F::ONE;
 
@@ -184,7 +185,10 @@ pub fn build_jive_crh_circuit<F: PrimeField>(
     qo[jive_output_idx] = F::ONE;
 
     permutation.copy((18, next_round_idx), (15, jive_output_idx));
-    permutation.copy((14, jive_output_idx), (18, usable_indices[*gate_counter - 17]));
+    permutation.copy(
+        (14, jive_output_idx),
+        (18, usable_indices[*gate_counter - 17]),
+    );
 
     current_hash
 }
@@ -213,9 +217,9 @@ pub fn rand_jive_crh_circuit<F: PrimeField, R: Rotatable + From<usize>>(
     }
 
     // Initialize polynomials using helper functions
-    let (mut w1_values, mut w2_values, mut w3_values, mut w4_values, mut wo_values) = 
+    let (mut w1_values, mut w2_values, mut w3_values, mut w4_values, mut wo_values) =
         init_witness_polynomials(size);
-    let [mut q1, mut q2, mut q3, mut q4, mut qo, mut qm1, mut qm2, mut qc, mut qecc, mut qb, mut qprk1, mut qprk2, mut qprk3, mut qprk4] = 
+    let [mut q1, mut q2, mut q3, mut q4, mut qo, mut qm1, mut qm2, mut qc, mut qecc, mut qb, mut qprk1, mut qprk2, mut qprk3, mut qprk4] =
         init_selector_polynomials(size);
 
     let mut permutation = Permutation::default();
@@ -267,7 +271,13 @@ pub fn rand_jive_crh_circuit<F: PrimeField, R: Rotatable + From<usize>>(
         w4_values[gate_idx] = current_y[1];
 
         // Apply Anemoi round using helper function
-        apply_anemoi_round(&mut current_x, &mut current_y, round, &constants, &round_keys);
+        apply_anemoi_round(
+            &mut current_x,
+            &mut current_y,
+            round,
+            &constants,
+            &round_keys,
+        );
     }
     // Set up next round values for the last round to enable Rotation::next() constraints
     let final_idx = usable_indices[NUM_ROUNDS + 1];
@@ -280,8 +290,10 @@ pub fn rand_jive_crh_circuit<F: PrimeField, R: Rotatable + From<usize>>(
     // TODO: For better security, this should be split into multiple constraints.
     // Currently implemented as PoC with combined constraint
     q1[final_idx] = F::from(3u64) * constants.generator + F::from(3u64);
-    q2[final_idx] = F::from(3u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
-    q3[final_idx] = F::from(2u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
+    q2[final_idx] =
+        F::from(3u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
+    q3[final_idx] =
+        F::from(2u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
     q4[final_idx] = F::from(2u64) * constants.generator + F::from(2u64);
     qo[final_idx] = F::ONE;
 
@@ -341,9 +353,7 @@ pub fn rand_jive_crh_circuit<F: PrimeField, R: Rotatable + From<usize>>(
 
 /// Create a PlonkishCircuitInfo for Anemoi hash with TurboPlonk constraints
 /// Based on the paper "An efficient verifiable state for zk-EVM and beyond from the Anemoi hash function"
-pub fn anemoi_hash_circuit_info_original<F: PrimeField>(
-    num_vars: usize,
-) -> PlonkishCircuitInfo<F> {
+pub fn anemoi_hash_circuit_info_original<F: PrimeField>(num_vars: usize) -> PlonkishCircuitInfo<F> {
     //14 selector polynomials for the Anemoi constraints
     // Create expressions for selector polynomials
     let [q1, q2, q3, q4, qo, qm1, qm2, qc, qecc, qb, qprk1, qprk2, qprk3, qprk4] =
@@ -448,9 +458,7 @@ pub fn anemoi_hash_circuit_info_original<F: PrimeField>(
 
 /// Create a PlonkishCircuitInfo for Anemoi hash with TurboPlonk constraints
 /// Based on the paper "An efficient verifiable state for zk-EVM and beyond from the Anemoi hash function"
-pub fn anemoi_hash_circuit_info<F: PrimeField>(
-    num_vars: usize,
-) -> PlonkishCircuitInfo<F> {
+pub fn anemoi_hash_circuit_info<F: PrimeField>(num_vars: usize) -> PlonkishCircuitInfo<F> {
     //14 selector polynomials for the Anemoi constraints
     // Create expressions for selector polynomials
     let [q1, q2, q3, q4, qo, qm1, qm2, qc, qecc, qb, qprk1, qprk2, qprk3, qprk4] =
@@ -575,9 +583,9 @@ pub fn rand_anemoi_hash_circuit_with_flatten<F: PrimeField, R: Rotatable + From<
     }
 
     // Initialize polynomials
-    let (mut w1_values, mut w2_values, mut w3_values, mut w4_values, mut wo_values) = 
+    let (mut w1_values, mut w2_values, mut w3_values, mut w4_values, mut wo_values) =
         init_witness_polynomials(size);
-    let [mut q1, mut q2, mut q3, mut q4, mut qo, mut qm1, mut qm2, mut qc, mut qecc, mut qb, mut qprk1, mut qprk2, mut qprk3, mut qprk4] = 
+    let [mut q1, mut q2, mut q3, mut q4, mut qo, mut qm1, mut qm2, mut qc, mut qecc, mut qb, mut qprk1, mut qprk2, mut qprk3, mut qprk4] =
         init_selector_polynomials(size);
 
     let mut permutation = Permutation::default();
@@ -633,7 +641,13 @@ pub fn rand_anemoi_hash_circuit_with_flatten<F: PrimeField, R: Rotatable + From<
         w4_values[current_gate_idx] = current_y[1];
 
         // Apply one round of Anemoi permutation
-        apply_anemoi_round(&mut current_x, &mut current_y, round, &constants, &round_keys);
+        apply_anemoi_round(
+            &mut current_x,
+            &mut current_y,
+            round,
+            &constants,
+            &round_keys,
+        );
     }
 
     // Set up next round values for the last round to enable Rotation::next() constraints
@@ -645,8 +659,10 @@ pub fn rand_anemoi_hash_circuit_with_flatten<F: PrimeField, R: Rotatable + From<
 
     // final state constraint
     q1[final_idx] = F::from(3u64) * constants.generator + F::from(3u64);
-    q2[final_idx] = F::from(3u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
-    q3[final_idx] = F::from(2u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
+    q2[final_idx] =
+        F::from(3u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
+    q3[final_idx] =
+        F::from(2u64) * (constants.generator * constants.generator + constants.generator + F::ONE);
     q4[final_idx] = F::from(2u64) * constants.generator + F::from(2u64);
     qo[final_idx] = F::ONE;
 
@@ -658,9 +674,14 @@ pub fn rand_anemoi_hash_circuit_with_flatten<F: PrimeField, R: Rotatable + From<
 
     // Final output gate (Gate NUM_ROUNDS+2) - Jive output
     let output_gate_idx = usable_indices[NUM_ROUNDS + 2];
-    let jive_output = w1_values[final_idx] + w2_values[final_idx] + w3_values[final_idx] + w4_values[final_idx] + sum_after_perm;
+    let jive_output = w1_values[final_idx]
+        + w2_values[final_idx]
+        + w3_values[final_idx]
+        + w4_values[final_idx]
+        + sum_after_perm;
 
-    w1_values[output_gate_idx] = w1_values[final_idx] + w2_values[final_idx] + w3_values[final_idx] + w4_values[final_idx];
+    w1_values[output_gate_idx] =
+        w1_values[final_idx] + w2_values[final_idx] + w3_values[final_idx] + w4_values[final_idx];
     w2_values[output_gate_idx] = sum_after_perm;
     w3_values[output_gate_idx] = F::ZERO;
     w4_values[output_gate_idx] = F::ZERO;
@@ -722,7 +743,13 @@ pub fn anemoi_jive_hash<F: PrimeField>(x: [F; 2], y: [F; 2]) -> F {
 
     // Anemoi rounds - apply transformations using helper function
     for round in 0..NUM_ROUNDS {
-        apply_anemoi_round(&mut current_x, &mut current_y, round, &constants, &round_keys);
+        apply_anemoi_round(
+            &mut current_x,
+            &mut current_y,
+            round,
+            &constants,
+            &round_keys,
+        );
     }
 
     // Apply final transformations using helper function
