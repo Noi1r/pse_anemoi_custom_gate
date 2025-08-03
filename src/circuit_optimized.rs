@@ -1,7 +1,7 @@
 use ff::PrimeField;
 use halo2_proofs::{
     arithmetic::Field,
-    circuit::{Layouter, Region, Value},
+    circuit::{AssignedCell, Layouter, Region, Value},
     plonk::{
         Advice, Circuit, Column, ConstraintSystem, Error, Expression, Fixed, Instance, Selector,
     },
@@ -9,7 +9,10 @@ use halo2_proofs::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::anemoi_constants::AnemoiConstants;
+use crate::{
+    anemoi_constants::AnemoiConstants,
+    utils::{assign_advice_batch, assign_fixed_batch, enable_fixed_selectors},
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MerklePosition {
@@ -278,20 +281,14 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
 
                 // 处理每一层的Merkle路径
                 for node in self.merkle_path.iter() {
-                    // 根据位置确定哈希函数参数的顺序
-                    let (left_hash, middle_hash, right_hash) = match node.position {
-                        MerklePosition::Left => (current_hash, node.sibling1, node.sibling2),
-                        MerklePosition::Middle => (node.sibling1, current_hash, node.sibling2),
-                        MerklePosition::Right => (node.sibling1, node.sibling2, current_hash),
-                    };
-
                     // 位置验证 (使用TurboPlonk基础约束)
-                    self.assign_position_verification_optimized(
-                        &mut region,
-                        &config,
-                        &mut offset,
-                        node.position.clone(),
-                    )?;
+                    let (left_hash, middle_hash, right_hash) = self
+                        .assign_position_verification_optimized(
+                            &mut region,
+                            &config,
+                            &mut offset,
+                            node.clone(),
+                        )?;
 
                     // 优化的Anemoi Jive CRH实现
                     current_hash = self.assign_optimized_anemoi_jive_crh(
@@ -302,6 +299,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                         middle_hash,
                         right_hash,
                         F::ZERO, // padding constant
+                        node.clone(),
                         &anemoi_constants,
                     )?;
                 }
@@ -314,14 +312,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                     self.expected_root,
                 )?;
 
-                let root_cell = region.assign_advice(
-                    || "expected_root",
-                    config.advices[1],
-                    offset - 1,
-                    || Value::known(self.expected_root),
-                )?;
-
-                Ok((leaf_cell, root_cell))
+                Ok((leaf_cell.clone(), leaf_cell))
             },
         )?;
 
@@ -340,74 +331,106 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
         region: &mut Region<'_, F>,
         config: &OptimizedMerkleConfig,
         offset: &mut usize,
-        position: MerklePosition,
-    ) -> Result<(), Error> {
-        let (is_left, is_middle, is_right) = match position {
+        node: MerkleProofNode<F>,
+    ) -> Result<(AssignedCell<F, F>, AssignedCell<F, F>, AssignedCell<F, F>), Error> {
+        let (is_left, is_middle, is_right) = match node.position {
             MerklePosition::Left => (F::ONE, F::ZERO, F::ZERO),
             MerklePosition::Middle => (F::ZERO, F::ONE, F::ZERO),
             MerklePosition::Right => (F::ZERO, F::ZERO, F::ONE),
         };
 
-        region.assign_fixed(
-            || "q2 selector",
-            config.q2,
+        // 激活 Turbo Plonk 约束
+        enable_fixed_selectors(
+            region,
+            "position verification",
+            &[config.q2, config.q3, config.q4, config.qo],
+            &[config.q1],
             *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "q3 selector",
-            config.q3,
-            *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "q4 selector",
-            config.q4,
-            *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "qo selector",
-            config.qo,
-            *offset,
-            || Value::known(F::ONE),
         )?;
 
         config.qb.enable(region, *offset)?; // 激活布尔约束
 
-        region.assign_advice(
-            || "unused_w1",
-            config.advices[0],
+        assign_advice_batch(
+            region,
+            &config.advices[1..], // 跳过 unused_w1
+            Some(&["is_left", "is_middle", "is_right", "sum_of_position_bit"]),
+            &[is_left, is_middle, is_right, F::ONE],
             *offset,
-            || Value::known(F::ZERO),
-        )?;
-        region.assign_advice(
-            || "is_left",
-            config.advices[1],
-            *offset,
-            || Value::known(is_left),
-        )?;
-        region.assign_advice(
-            || "is_middle",
-            config.advices[2],
-            *offset,
-            || Value::known(is_middle),
-        )?;
-        region.assign_advice(
-            || "is_right",
-            config.advices[3],
-            *offset,
-            || Value::known(is_right),
-        )?;
-        region.assign_advice(
-            || "unused_wo",
-            config.advices[4],
-            *offset,
-            || Value::known(F::ONE),
         )?;
 
         *offset += 1;
-        Ok(())
+        let (left_hash, middle_hash, right_hash) = match node.position {
+            MerklePosition::Left => (node.current_hash, node.sibling1, node.sibling2),
+            MerklePosition::Middle => (node.sibling1, node.current_hash, node.sibling2),
+            MerklePosition::Right => (node.sibling1, node.sibling2, node.current_hash),
+        };
+        let partial_sum = left_hash * is_left + middle_hash * is_middle;
+
+        // 激活 Turbo Plonk 约束
+        config.qm1.enable(region, *offset)?;
+        config.qm2.enable(region, *offset)?;
+        enable_fixed_selectors(
+            region,
+            "position verification",
+            &[config.qo],
+            &[config.q1, config.q2, config.q3, config.q4],
+            *offset,
+        )?;
+
+        // @WindOctober: TODO permutation.
+        let left_middle_cells = assign_advice_batch(
+            region,
+            &config.advices,
+            Some(&[
+                "left_hash",
+                "is_left",
+                "middle_hash",
+                "is_middle",
+                "partial_sum",
+            ]),
+            &[left_hash, is_left, middle_hash, is_middle, partial_sum],
+            *offset,
+        )?;
+
+        *offset += 1;
+
+        config.qm1.enable(region, *offset)?;
+
+        enable_fixed_selectors(
+            region,
+            "position verification",
+            &[config.q3, config.qo],
+            &[config.q1, config.q2, config.q4],
+            *offset,
+        )?;
+
+        // @WindOctober: TODO permutation.
+        let right_cells = assign_advice_batch(
+            region,
+            &config.advices,
+            Some(&[
+                "right_hash",
+                "is_right",
+                "partial_sum",
+                "zero",
+                "current_hash",
+            ]),
+            &[
+                right_hash,
+                is_right,
+                partial_sum,
+                F::ZERO,
+                node.current_hash,
+            ],
+            *offset,
+        )?;
+
+        *offset += 1;
+        let left_hash_cell = left_middle_cells[0].clone();
+        let middle_hash_cell = left_middle_cells[2].clone();
+        let right_hash_cell = right_cells[0].clone();
+
+        Ok((left_hash_cell, middle_hash_cell, right_hash_cell))
     }
 
     /// 优化的Anemoi Jive CRH实现 (使用5列witness)
@@ -416,175 +439,111 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
         region: &mut Region<'_, F>,
         config: &OptimizedMerkleConfig,
         offset: &mut usize,
-        left: F,
-        middle: F,
-        right: F,
+        left: AssignedCell<F, F>,
+        middle: AssignedCell<F, F>,
+        right: AssignedCell<F, F>,
         padding: F,
+        node: MerkleProofNode<F>,
         constants: &AnemoiConstants<F>,
     ) -> Result<F, Error> {
-        let mut jive_x = [left, middle];
-        let mut jive_y = [right, padding];
+        let (left_hash, middle_hash, right_hash) = match node.position {
+            MerklePosition::Left => (node.current_hash, node.sibling1, node.sibling2),
+            MerklePosition::Middle => (node.sibling1, node.current_hash, node.sibling2),
+            MerklePosition::Right => (node.sibling1, node.sibling2, node.current_hash),
+        };
+
+        let mut jive_x = [left_hash, middle_hash];
+        let mut jive_y = [right_hash, padding];
+
         let sum_before_perm = jive_x[0] + jive_x[1] + jive_y[0] + jive_y[1];
-        region.assign_fixed(
-            || "q1 selector",
-            config.q1,
+        enable_fixed_selectors(
+            region,
+            "jive hash round",
+            &[config.q1, config.q2, config.q3, config.q4, config.qo],
+            &[],
             *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "q2 selector",
-            config.q2,
-            *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "q3 selector",
-            config.q3,
-            *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "q4 selector",
-            config.q4,
-            *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "qo selector",
-            config.qo,
-            *offset,
-            || Value::known(F::ONE),
         )?;
 
-        region.assign_advice(
-            || "x0",
-            config.advices[0],
+        let cells = assign_advice_batch(
+            region,
+            &config.advices,
+            Some(&["x0", "x1", "y0", "y1", "sum_before"]),
+            &[jive_x[0], jive_x[1], jive_y[0], jive_y[1], sum_before_perm],
             *offset,
-            || Value::known(jive_x[0]),
-        )?;
-        region.assign_advice(
-            || "x1",
-            config.advices[1],
-            *offset,
-            || Value::known(jive_x[1]),
-        )?;
-        region.assign_advice(
-            || "y0",
-            config.advices[2],
-            *offset,
-            || Value::known(jive_y[0]),
-        )?;
-        region.assign_advice(
-            || "y1",
-            config.advices[3],
-            *offset,
-            || Value::known(jive_y[1]),
-        )?;
-        region.assign_advice(
-            || "sum_before",
-            config.advices[4],
-            *offset,
-            || Value::known(sum_before_perm),
         )?;
 
+        region.constrain_equal(left.cell(), cells[0].cell())?; // left -> x0
+        region.constrain_equal(middle.cell(), cells[1].cell())?; // middle -> x1
+        region.constrain_equal(right.cell(), cells[2].cell())?; // right -> y0
         *offset += 1;
 
         // 14轮Anemoi变换 (每轮一行，使用预处理轮密钥)
         for round in 0..14 {
-            region.assign_fixed(
-                || format!("qprk1_round_{}", round),
-                config.qprk1,
+            assign_fixed_batch(
+                region,
+                &[config.qprk1, config.qprk2, config.qprk3, config.qprk4],
+                Some(&[
+                    &format!("qprk1_round_{}", round),
+                    &format!("qprk2_round_{}", round),
+                    &format!("qprk3_round_{}", round),
+                    &format!("qprk4_round_{}", round),
+                ]),
+                &[
+                    constants.preprocessed_round_keys_x[round][0],
+                    constants.preprocessed_round_keys_x[round][1],
+                    constants.preprocessed_round_keys_y[round][0],
+                    constants.preprocessed_round_keys_y[round][1],
+                ],
                 *offset,
-                || Value::known(constants.preprocessed_round_keys_x[round][0]),
             )?;
-            region.assign_fixed(
-                || format!("qprk2_round_{}", round),
-                config.qprk2,
-                *offset,
-                || Value::known(constants.preprocessed_round_keys_x[round][1]),
-            )?;
-            region.assign_fixed(
-                || format!("qprk3_round_{}", round),
-                config.qprk3,
-                *offset,
-                || Value::known(constants.preprocessed_round_keys_y[round][0]),
-            )?;
-            region.assign_fixed(
-                || format!("qprk4_round_{}", round),
-                config.qprk4,
-                *offset,
-                || Value::known(constants.preprocessed_round_keys_y[round][1]),
-            )?;
+            let annotations = [
+                format!("round_{}_x0", round),
+                format!("round_{}_x1", round),
+                format!("round_{}_y0", round),
+                format!("round_{}_y1", round),
+            ];
 
-            // 存储当前轮状态
-            region.assign_advice(
-                || format!("round_{}_x0", round),
-                config.advices[0],
+            assign_advice_batch(
+                region,
+                &config.advices[..4],
+                Some(&annotations.iter().map(String::as_str).collect::<Vec<_>>()),
+                &[jive_x[0], jive_x[1], jive_y[0], jive_y[1]],
                 *offset,
-                || Value::known(jive_x[0]),
-            )?;
-            region.assign_advice(
-                || format!("round_{}_x1", round),
-                config.advices[1],
-                *offset,
-                || Value::known(jive_x[1]),
-            )?;
-            region.assign_advice(
-                || format!("round_{}_y0", round),
-                config.advices[2],
-                *offset,
-                || Value::known(jive_y[0]),
-            )?;
-            region.assign_advice(
-                || format!("round_{}_y1", round),
-                config.advices[3],
-                *offset,
-                || Value::known(jive_y[1]),
             )?;
 
             self.apply_anemoi_round(&mut jive_x, &mut jive_y, round, constants);
 
-            // region.assign_advice(
-            //     || format!("round_{}_intermediate", round),
-            //     config.advices[4],
-            //     *offset,
-            //     || Value::known(jive_y[1]), // 可以根据约束调整
-            // )?;
-
             *offset += 1;
         }
 
-        // 设置下一行数据以满足Rotation::next()约束
-        region.assign_advice(
-            || "final_x0",
-            config.advices[0],
+        let annotations = ["final_x0", "final_x1", "final_y0", "final_y1"];
+
+        assign_advice_batch(
+            region,
+            &config.advices[..4],
+            Some(&annotations),
+            &[jive_x[0], jive_x[1], jive_y[0], jive_y[1]],
             *offset,
-            || Value::known(jive_x[0]),
-        )?;
-        region.assign_advice(
-            || "final_x1",
-            config.advices[1],
-            *offset,
-            || Value::known(jive_x[1]),
-        )?;
-        region.assign_advice(
-            || "final_y0",
-            config.advices[2],
-            *offset,
-            || Value::known(jive_y[0]),
-        )?;
-        region.assign_advice(
-            || "final_y1",
-            config.advices[3],
-            *offset,
-            || Value::known(jive_y[1]),
         )?;
 
-        // 应用最终变换
+        assign_fixed_batch(
+            region,
+            &[config.q1, config.q2, config.q3, config.q4, config.qo],
+            Some(&["q1_final", "q2_final", "q3_final", "q4_final", "qo_final"]),
+            &[
+                F::from(3u64) * constants.generator + F::from(3u64),
+                F::from(3u64)
+                    * (constants.generator * constants.generator + constants.generator + F::ONE),
+                F::from(2u64)
+                    * (constants.generator * constants.generator + constants.generator + F::ONE),
+                F::from(2u64) * constants.generator + F::from(2u64),
+                F::ONE,
+            ],
+            *offset,
+        )?;
         self.apply_final_transformations(&mut jive_x, &mut jive_y, constants);
 
         let sum_after_perm = jive_x[0] + jive_x[1] + jive_y[0] + jive_y[1];
-        let jive_output = sum_before_perm + sum_after_perm;
 
         region.assign_advice(
             || "sum_after",
@@ -592,57 +551,29 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
             *offset,
             || Value::known(sum_after_perm),
         )?;
+
         *offset += 1;
-
-        // 激活最终输出约束选择器
-        region.assign_fixed(
-            || "q1 selector",
-            config.q1,
+        let jive_output = sum_before_perm + sum_after_perm;
+        enable_fixed_selectors(
+            region,
+            "final checksum",
+            &[config.q1, config.q2, config.qo],
+            &[config.q3, config.q4],
             *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "q2 selector",
-            config.q2,
-            *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "qo selector",
-            config.qo,
-            *offset,
-            || Value::known(F::ONE),
         )?;
 
-        region.assign_advice(
-            || "sum_before_final",
-            config.advices[0],
+        assign_advice_batch(
+            region,
+            &config.advices,
+            Some(&["sum_before", "sum_after", "zero", "zero", "output"]),
+            &[
+                sum_before_perm,
+                sum_after_perm,
+                F::ZERO,
+                F::ZERO,
+                jive_output,
+            ],
             *offset,
-            || Value::known(sum_before_perm),
-        )?;
-        region.assign_advice(
-            || "sum_after_final",
-            config.advices[1],
-            *offset,
-            || Value::known(sum_after_perm),
-        )?;
-        region.assign_advice(
-            || "unused_w3",
-            config.advices[2],
-            *offset,
-            || Value::known(F::ZERO),
-        )?;
-        region.assign_advice(
-            || "unused_w4",
-            config.advices[3],
-            *offset,
-            || Value::known(F::ZERO),
-        )?;
-        region.assign_advice(
-            || "jive_output",
-            config.advices[4],
-            *offset,
-            || Value::known(jive_output),
         )?;
 
         *offset += 1;
@@ -660,19 +591,15 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
         expected_root: F,
     ) -> Result<(), Error> {
         // 激活根验证约束选择器
-        region.assign_fixed(
-            || "q1 selector",
-            config.q1,
+        enable_fixed_selectors(
+            region,
+            "final checksum",
+            &[config.q1, config.qo],
+            &[config.q3, config.q2, config.q4],
             *offset,
-            || Value::known(F::ONE),
-        )?;
-        region.assign_fixed(
-            || "qo selector",
-            config.qo,
-            *offset,
-            || Value::known(F::ONE),
         )?;
 
+        println!("{:?} {:?}", computed_root, expected_root);
         region.assign_advice(
             || "computed_root",
             config.advices[0],

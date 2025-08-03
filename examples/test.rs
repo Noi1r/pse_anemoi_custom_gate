@@ -53,14 +53,13 @@ fn main() {
             MerklePosition::Right => (sibling1, sibling2, current_hash),
         };
 
-        current_hash = complete_anemoi_jive_hash(left, middle, right, Fr::ZERO);
-
         merkle_path.push(MerkleProofNode {
             current_hash,
             sibling1,
             sibling2,
             position,
         });
+        current_hash = complete_anemoi_jive_hash(left, middle, right, Fr::ZERO);
     }
 
     let expected_root = current_hash;
