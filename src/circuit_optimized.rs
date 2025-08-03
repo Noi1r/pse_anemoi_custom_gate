@@ -304,7 +304,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                     )?;
                 }
                 // 最终根验证
-                self.assign_root_verification_optimized(
+                let root_cell = self.assign_root_verification_optimized(
                     &mut region,
                     &config,
                     &mut offset,
@@ -312,7 +312,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                     self.expected_root,
                 )?;
 
-                Ok((leaf_cell.clone(), leaf_cell))
+                Ok((leaf_cell, root_cell))
             },
         )?;
 
@@ -513,6 +513,12 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
 
             self.apply_anemoi_round(&mut jive_x, &mut jive_y, round, constants);
 
+            region.assign_advice(
+                || "wo optimized",
+                config.advices[4],
+                *offset,
+                || Value::known(jive_y[1]),
+            )?;
             *offset += 1;
         }
 
@@ -580,8 +586,6 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
 
         Ok(jive_output)
     }
-
-    /// 最终根验证 (使用TurboPlonk基础约束)
     fn assign_root_verification_optimized(
         &self,
         region: &mut Region<'_, F>,
@@ -589,7 +593,7 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
         offset: &mut usize,
         computed_root: F,
         expected_root: F,
-    ) -> Result<(), Error> {
+    ) -> Result<AssignedCell<F, F>, Error> {
         // 激活根验证约束选择器
         enable_fixed_selectors(
             region,
@@ -599,40 +603,23 @@ impl<F: PrimeField> OptimizedMerkleMembershipCircuit<F> {
             *offset,
         )?;
 
-        println!("{:?} {:?}", computed_root, expected_root);
-        region.assign_advice(
-            || "computed_root",
-            config.advices[0],
+        let cells = assign_advice_batch(
+            region,
+            &config.advices,
+            Some(&[
+                "computed_root",
+                "unused_w2",
+                "unused_w3",
+                "unused_w4",
+                "expected_root",
+            ]),
+            &[computed_root, F::ZERO, F::ZERO, F::ZERO, expected_root],
             *offset,
-            || Value::known(computed_root),
-        )?;
-        region.assign_advice(
-            || "unused_w2",
-            config.advices[1],
-            *offset,
-            || Value::known(F::ZERO),
-        )?;
-        region.assign_advice(
-            || "unused_w3",
-            config.advices[2],
-            *offset,
-            || Value::known(F::ZERO),
-        )?;
-        region.assign_advice(
-            || "unused_w4",
-            config.advices[3],
-            *offset,
-            || Value::known(F::ZERO),
-        )?;
-        region.assign_advice(
-            || "expected_root",
-            config.advices[4],
-            *offset,
-            || Value::known(expected_root),
         )?;
 
         *offset += 1;
-        Ok(())
+
+        Ok(cells[4].clone())
     }
 
     /// 应用单轮Anemoi变换
