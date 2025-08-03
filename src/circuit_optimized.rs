@@ -75,7 +75,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
     fn configure(cs: &mut ConstraintSystem<F>) -> Self::Config {
         let advices = [(); 5].map(|_| cs.advice_column());
 
-        // TurboPlonk标准选择器
+        // TurboPlonk Selectors.
         let q1 = cs.fixed_column();
         let q2 = cs.fixed_column();
         let q3 = cs.fixed_column();
@@ -87,7 +87,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
         let qecc = cs.complex_selector();
         let qb = cs.complex_selector();
 
-        // Anemoi预处理轮密钥
+        // Anemoi Preprocess Round Key.
         let qprk1 = cs.fixed_column();
         let qprk2 = cs.fixed_column();
         let qprk3 = cs.fixed_column();
@@ -95,13 +95,13 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
 
         let instance = cs.instance_column();
 
-        // 启用相等约束
+        // Enable Permutation.
         for advice in advices.iter() {
             cs.enable_equality(*advice);
         }
         cs.enable_equality(instance);
 
-        // 📝 基础TurboPlonk约束 (合并所有线性约束)
+        // Base Constraint for TurboPlonk.
         cs.create_gate("turbo_plonk_base", |meta| {
             let w1 = meta.query_advice(advices[0], Rotation::cur());
             let w2 = meta.query_advice(advices[1], Rotation::cur());
@@ -120,7 +120,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
             let qecc = meta.query_selector(qecc);
 
             vec![
-                // TurboPlonk基础约束：q1*w1 + q2*w2 + q3*w3 + q4*w4 + qm1*w1*w2 + qm2*w3*w4 + qc + qecc*w1*w2*w3*w4*wo - qo*wo = 0
+                // q1*w1 + q2*w2 + q3*w3 + q4*w4 + qm1*w1*w2 + qm2*w3*w4 + qc + qecc*w1*w2*w3*w4*wo - qo*wo = 0
                 q1 * w1.clone()
                     + q2 * w2.clone()
                     + q3 * w3.clone()
@@ -133,21 +133,24 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
             ]
         });
 
-        // 📝 布尔约束
-        cs.create_gate("boolean_constraints", |meta| {
-            let w2 = meta.query_advice(advices[1], Rotation::cur());
-            let w3 = meta.query_advice(advices[2], Rotation::cur());
-            let w4 = meta.query_advice(advices[3], Rotation::cur());
-            let qb = meta.query_selector(qb);
+        // Boolean Constraints: qb * (w2, w3, w4 must be in {0, 1}).
+        cs.create_gate(
+            "boolean_constraints",
+            |meta: &mut halo2_proofs::plonk::VirtualCells<'_, F>| {
+                let w2 = meta.query_advice(advices[1], Rotation::cur());
+                let w3 = meta.query_advice(advices[2], Rotation::cur());
+                let w4 = meta.query_advice(advices[3], Rotation::cur());
+                let qb = meta.query_selector(qb);
 
-            vec![
-                qb.clone() * w2.clone() * (w2 - Expression::Constant(F::ONE)),
-                qb.clone() * w3.clone() * (w3 - Expression::Constant(F::ONE)),
-                qb * w4.clone() * (w4 - Expression::Constant(F::ONE)),
-            ]
-        });
+                vec![
+                    qb.clone() * w2.clone() * (w2 - Expression::Constant(F::ONE)),
+                    qb.clone() * w3.clone() * (w3 - Expression::Constant(F::ONE)),
+                    qb * w4.clone() * (w4 - Expression::Constant(F::ONE)),
+                ]
+            },
+        );
 
-        // 📝 Anemoi约束 (基于reference中的实现)
+        // 📝 Anemoi Constraints.
         cs.create_gate("anemoi_constraints", |meta| {
             let w1 = meta.query_advice(advices[0], Rotation::cur());
             let w2 = meta.query_advice(advices[1], Rotation::cur());
@@ -164,7 +167,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
             let qprk3 = meta.query_fixed(qprk3, Rotation::cur());
             let qprk4 = meta.query_fixed(qprk4, Rotation::cur());
 
-            // Anemoi常量
+            // Anemoi generator.
             let g = Expression::Constant(F::from(5u64)); // generator
             let g_inv = Expression::Constant(
                 F::from_str_vartime(
@@ -173,7 +176,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                 .unwrap_or(F::ZERO),
             ); // generator_inv
 
-            // 计算中间表达式
+            // Intermediate Expression.
             let c_prime_1 =
                 w1.clone() + w4.clone() + g.clone() * (w2.clone() + w3.clone()) + qprk3.clone();
             let c_prime_2 = g.clone() * (w1.clone() + w4.clone())
@@ -184,7 +187,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
             let two = Expression::Constant(F::from(2u64));
 
             vec![
-                // Anemoi约束1 - 手动展开5次幂和平方
+                // Anemoi Constraints 1.
                 qprk3.clone()
                     * ((c_prime_1.clone() - w3_next.clone())
                         * (c_prime_1.clone() - w3_next.clone())
@@ -196,7 +199,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                             + w4.clone()
                             + g.clone() * (two.clone() * w2.clone() + w3.clone())
                             + qprk1)),
-                // Anemoi约束2 (使用wo而不是w4_next) - 手动展开5次幂和平方
+                // Anemoi Constraints 2.
                 qprk3.clone()
                     * ((c_prime_2.clone() - wo.clone())
                         * (c_prime_2.clone() - wo.clone())
@@ -208,7 +211,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                             + (g.clone() * g.clone() + Expression::Constant(F::ONE))
                                 * (two.clone() * w2.clone() + w3.clone())
                             + qprk2)),
-                // Anemoi约束3 - 手动展开5次幂和平方
+                // Anemoi Constraints 3.
                 qprk3.clone()
                     * ((c_prime_1.clone() - w3_next.clone())
                         * (c_prime_1.clone() - w3_next.clone())
@@ -218,7 +221,7 @@ impl<F: PrimeField> Circuit<F> for OptimizedMerkleMembershipCircuit<F> {
                         + g.clone() * w3_next.clone() * w3_next.clone()
                         + g_inv.clone()
                         - w1_next),
-                // Anemoi约束4 (使用wo) - 手动展开5次幂和平方
+                // Anemoi Constraints 4.
                 qprk3
                     * ((c_prime_2.clone() - wo.clone())
                         * (c_prime_2.clone() - wo.clone())
